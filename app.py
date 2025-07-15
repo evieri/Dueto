@@ -66,6 +66,8 @@ analisar_btn = st.button("Analisar Dueto")
 
 # --- LÓGICA PRINCIPAL ---
 
+# app.py (substitua todo o bloco if analisar_btn:)
+
 if analisar_btn:
     nomes_albuns_a = [album for album in albuns_a if album]
     nomes_albuns_b = [album for album in albuns_b if album]
@@ -74,34 +76,57 @@ if analisar_btn:
         st.warning("Por favor, preencha pelo menos um álbum para cada lado.")
     else:
         with st.spinner("Analisando gostos e buscando recomendações... 🎶"):
+            
+            # --- Busca dos dados ---
             dados_albuns_a = [buscar_album(nome) for nome in nomes_albuns_a]
             dados_albuns_b = [buscar_album(nome) for nome in nomes_albuns_b]
+
+            # --- Dica de Debug: Mostrar quais álbuns não foram encontrados ---
+            nao_encontrados = []
+            for i, album_data in enumerate(dados_albuns_a):
+                if not album_data:
+                    nao_encontrados.append(f"Lado A: '{nomes_albuns_a[i]}'")
+            for i, album_data in enumerate(dados_albuns_b):
+                if not album_data:
+                    nao_encontrados.append(f"Lado B: '{nomes_albuns_b[i]}'")
             
+            if nao_encontrados:
+                st.warning(f"Atenção: Os seguintes álbuns não foram encontrados. Verifique a ortografia:\n\n* " + "\n* ".join(nao_encontrados))
+
             dados_albuns_a = [a for a in dados_albuns_a if a]
             dados_albuns_b = [a for a in dados_albuns_b if a]
-
+            
+            # --- Coleta de Sementes ---
             ids_artistas_semente = []
             generos_semente = set()
             ids_albuns_selecionados = {album['id'] for album in dados_albuns_a + dados_albuns_b}
 
             for album in dados_albuns_a + dados_albuns_b:
-                info_album = sp.album(album['id'])
-                id_artista = info_album['artists'][0]['id']
-                if id_artista:
-                    ids_artistas_semente.append(id_artista)
-                
-                info_artista = sp.artist(id_artista)
-                if info_artista and info_artista['genres']:
-                    generos_semente.update(info_artista['genres'])
+                try:
+                    info_album = sp.album(album['id'])
+                    id_artista = info_album['artists'][0]['id']
+                    if id_artista:
+                        ids_artistas_semente.append(id_artista)
+                    
+                    info_artista = sp.artist(id_artista)
+                    if info_artista and info_artista['genres']:
+                        generos_semente.update(info_artista['genres'])
+                except Exception as e:
+                    st.error(f"Ocorreu um erro ao buscar detalhes de um álbum: {e}")
 
-            if ids_artistas_semente:
-                # API aceita no máximo 5 sementes de cada tipo
+            # --- Lógica de Recomendação com Verificação ---
+            # CRÍTICO: Verificamos se temos sementes válidas ANTES de chamar a API
+            if not ids_artistas_semente and not generos_semente:
+                st.error("Não foi possível encontrar informações suficientes (artistas ou gêneros) para gerar recomendações. Tente álbuns diferentes ou verifique a grafia.")
+            else:
+                # Se tivermos sementes, continuamos com a lógica
                 recomendacoes = sp.recommendations(
                     seed_artists=list(set(ids_artistas_semente))[:3], 
                     seed_genres=list(generos_semente)[:2],
                     limit=20 
                 )
                 
+                # O restante do código para filtrar e exibir as recomendações
                 albuns_recomendados = []
                 for faixa in recomendacoes['tracks']:
                     album_rec = faixa['album']
@@ -143,5 +168,4 @@ if analisar_btn:
                             st.caption(f"**{album['nome']}**\n\n{album['artista']}")
                 else:
                     st.write("Não foi possível gerar recomendações únicas com base nas escolhas.")
-            else:
-                 st.error("Não foi possível encontrar informações suficientes para gerar recomendações.")
+                    
