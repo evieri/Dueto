@@ -21,7 +21,6 @@ except Exception as e:
     st.stop()
 
 # --- FUNÇÕES DE BANCO DE DADOS ---
-@st.cache_resource
 def get_db_connection():
     """Estabelece e retorna uma conexão com o banco de dados."""
     conn = psycopg2.connect(DATABASE_URL)
@@ -315,9 +314,10 @@ if analisar_btn:
 
                     # --- ADIÇÃO: BLOCO PARA SALVAR NO BANCO DE DADOS ---
                     try:
-                        conn = get_db_connection()
-                        setup_database(conn) # Garante que as tabelas existem
-                        salvar_dados_dueto(conn, dados_albuns_a, dados_albuns_b, top_recomendacoes)
+                        # A conexão é obtida, usada e fechada de forma segura aqui dentro
+                        with get_db_connection() as conn:
+                            setup_database(conn)
+                            salvar_dados_dueto(conn, dados_albuns_a, dados_albuns_b, top_recomendacoes)
                     except Exception as e:
                         st.error(f"Não foi possível conectar ou salvar no banco de dados: {e}")
                     # --- FIM DA ADIÇÃO ---
