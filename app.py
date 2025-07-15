@@ -283,104 +283,108 @@ analisar_btn = st.button("Analisar Dueto", type="primary", use_container_width=T
 if analisar_btn:
     dados_albuns_a = [album for album in st.session_state.selecoes['a'] if album]
     dados_albuns_b = [album for album in st.session_state.selecoes['b'] if album]
-    
     if not dados_albuns_a or not dados_albuns_b:
         st.warning("É preciso selecionar pelo menos um álbum para cada lado.")
     else:
-        with st.spinner("Analisando seus gostos e buscando recomendações... 🎶"):
+        with st.spinner("Analisando seus gostos, buscando candidatos e calculando a sintonia... 🎶"):
+            # --- FASE 1: COLETA DE INGREDIENTES ---
+            # (Esta parte permanece a mesma)
+            generos_validos = obter_generos_validos(sp)
+            gostos_de_genero = []
+            artistas_fonte_ids = set()
+            albuns_selecionados_ids = {album['id'] for album in dados_albuns_a + dados_albuns_b}
+
+            for album_data in dados_albuns_a + dados_albuns_b:
+                try:
+                    album_info_completo = sp.album(album_data['id'])
+                    info_artista = sp.artist(album_info_completo['artists'][0]['id'])
+                    artistas_fonte_ids.add(info_artista['id'])
+                    for genero in info_artista['genres']:
+                        if genero in generos_validos:
+                            gostos_de_genero.append(genero)
+                except: pass
+
+            # --- FASE 2: GERAÇÃO DE CANDIDATOS COM PLANO A E PLANO B ---
+            # (Esta parte permanece a mesma)
+            recomendacoes_api = None
+            params_a = {'limit': 25}
+            sementes_artistas = list(artistas_fonte_ids)[:3]
+            top_generos = [g for g, c in Counter(gostos_de_genero).most_common(2)]
+            if sementes_artistas: params_a['seed_artists'] = sementes_artistas
+            if top_generos: params_a['seed_genres'] = top_generos
+            
             try:
-                # --- FASE 1: COLETA DE DADOS ---
-                generos_encontrados = []
-                artistas_ids = set()
-                albuns_selecionados_ids = {album['id'] for album in dados_albuns_a + dados_albuns_b}
+                if 'seed_artists' in params_a or 'seed_genres' in params_a:
+                    recomendacoes_api = sp.recommendations(**params_a)
+            except Exception:
+                recomendacoes_api = None
 
-                for album_data in dados_albuns_a + dados_albuns_b:
-                    try:
-                        album_info = sp.album(album_data['id'])
-                        artista_id = album_info['artists'][0]['id']
-                        info_artista = sp.artist(artista_id)
-                        
-                        artistas_ids.add(artista_id)
-                        generos_encontrados.extend(info_artista.get('genres', []))
-                        
-                    except Exception as e:
-                        st.warning(f"Erro ao processar álbum {album_data['nome']}: {e}")
-                        continue
-
-                if not artistas_ids:
-                    st.error("Não foi possível processar nenhum álbum. Tente novamente.")
+            if not recomendacoes_api or not recomendacoes_api.get('tracks'):
+                try:
+                    params_b = {'limit': 25, 'seed_tracks': list(albuns_selecionados_ids)[:5]}
+                    recomendacoes_api = sp.recommendations(**params_b)
+                except Exception as e:
+                    st.error("Ocorreu um erro ao buscar recomendações do Spotify. Tente uma combinação diferente de álbuns.")
                     st.stop()
 
-                # --- FASE 2: GERAÇÃO DE RECOMENDAÇÕES ALTERNATIVAS ---
-                st.info("🔄 Gerando recomendações usando artistas relacionados e busca por gêneros...")
-                
-                recomendacoes = gerar_recomendacoes_alternativas(list(artistas_ids), generos_encontrados)
-                
-                # Remove álbuns já selecionados
-                recomendacoes_filtradas = [
-                    rec for rec in recomendacoes 
-                    if rec['album_data']['id'] not in albuns_selecionados_ids
-                ]
-                
-                # Remove duplicatas
-                albuns_vistos = set()
-                recomendacoes_unicas = []
-                for rec in recomendacoes_filtradas:
-                    if rec['album_data']['id'] not in albuns_vistos:
-                        albuns_vistos.add(rec['album_data']['id'])
-                        recomendacoes_unicas.append(rec)
+            # --- FASE 3: SISTEMA DE PONTUAÇÃO (COM CORREÇÃO NA POPULARIDADE) ---
+            if not recomendacoes_api or not recomendacoes_api.get('tracks'):
+                st.warning("Não foi possível gerar recomendações com base na combinação de gostos. Tente outros álbuns!")
+                st.stop()
 
-                if not recomendacoes_unicas:
-                    st.warning("Não foi possível gerar recomendações. Tente com álbuns diferentes.")
-                else:
-                    # Ordena por score e popularidade
-                    recomendacoes_ordenadas = sorted(
-                        recomendacoes_unicas, 
-                        key=lambda x: (x['score'], x['popularity']), 
-                        reverse=True
-                    )
-                    
-                    # Pega top 5 recomendações
-                    top_recomendacoes = recomendacoes_ordenadas[:5]
-                    
-                    st.success("✨ Análise Concluída!")
+            candidatos_pontuados = []
+            artistas_processados = {}
+            for faixa in recomendacoes_api['tracks']:
+                album_candidato = faixa['album']
+                if album_candidato['id'] in albuns_selecionados_ids or any(c['album_data']['id'] == album_candidato['id'] for c in candidatos_pontuados):
+                    continue
+
+                # ---- MUDANÇA CRÍTICA AQUI ----
+                # Busca os detalhes COMPLETOS do álbum para pegar a popularidade correta
+                try:
+                    album_completo = sp.album(album_candidato['id'])
+                    popularidade_album = album_completo.get('popularity', 0)
+                except:
+                    popularidade_album = 0 # Se a busca falhar, assume 0
+                
+                score = 0
+                id_artista_candidato = album_candidato['artists'][0]['id']
+                if id_artista_candidato not in artistas_processados:
+                    try: artistas_processados[id_artista_candidato] = sp.artist(id_artista_candidato)['genres']
+                    except: artistas_processados[id_artista_candidato] = []
+                
+                generos_candidato = artistas_processados[id_artista_candidato]
+                for genero in generos_candidato:
+                    if genero in gostos_de_genero: score += 10
+                if id_artista_candidato in artistas_fonte_ids: score += 5
+
+                candidatos_pontuados.append({
+                    "album_data": {"id": album_candidato['id'], "nome": album_candidato['name'], "artista": album_candidato['artists'][0]['name'], "capa": album_candidato['images'][0]['url']},
+                    "score": score,
+                    "popularity": popularidade_album # Usa o valor correto
+                })
+
+            # --- FASE 4: CLASSIFICAÇÃO FINAL (COM EXIBIÇÃO DA POPULARIDADE) ---
+            if not candidatos_pontuados:
+                st.warning("Não foi possível gerar recomendações com base na combinação de gostos. Tente outros álbuns!")
+            else:
+                candidatos_ordenados = sorted(candidatos_pontuados, key=lambda x: (x['score'], x['popularity']), reverse=True)
+                top_5_recomendacoes = candidatos_ordenados[:5]
+                st.success("Análise Concluída!")
+                st.divider()
+                st.subheader("✨ Top 5 Recomendações para o Dueto ✨")
+                
+                for i, rec in enumerate(top_5_recomendacoes):
+                    album = rec['album_data']
+                    col_img, col_info = st.columns([1, 4])
+                    with col_img:
+                        st.image(album['capa'], use_container_width=True)
+                    with col_info:
+                        st.write(f"**{i+1}. {album['nome']}**")
+                        st.write(f"Artista: {album['artista']}")
+                        # Adicionamos a popularidade na exibição
+                        st.caption(f"Pontuação de Sintonia: {rec['score']} | 🔥 Popularidade: {rec['popularity']}")
                     st.divider()
-                    st.subheader("🎵 Top 5 Recomendações para o Dueto")
-                    st.write("Baseado em artistas relacionados e análise de gêneros!")
-                    
-                    for i, rec in enumerate(top_recomendacoes):
-                        album = rec['album_data']
-                        col_img, col_info = st.columns([1, 4])
-                        with col_img:
-                            if album['capa']:
-                                st.image(album['capa'], use_container_width=True)
-                        with col_info:
-                            st.write(f"**{i+1}. {album['nome']}**")
-                            st.write(f"🎤 Artista: {album['artista']}")
-                            st.caption(f"📊 Score: {rec['score']} | 🔥 Popularidade: {rec['popularity']} | 🎯 {rec['origem']}")
-                        st.divider()
-
-                    # Mostra estatísticas
-                    st.subheader("📊 Análise do Dueto")
-                    col_stats1, col_stats2 = st.columns(2)
-                    
-                    with col_stats1:
-                        st.metric("Artistas Analisados", len(artistas_ids))
-                        st.metric("Álbuns Selecionados", len(dados_albuns_a + dados_albuns_b))
-                    
-                    with col_stats2:
-                        st.metric("Gêneros Encontrados", len(set(generos_encontrados)))
-                        st.metric("Recomendações Geradas", len(recomendacoes_unicas))
-                    
-                    if generos_encontrados:
-                        st.write("🎨 **Gêneros do seu dueto:**")
-                        generos_contados = Counter(generos_encontrados)
-                        for genero, count in generos_contados.most_common(5):
-                            st.write(f"• {genero.title()} ({count}x)")
-
-            except Exception as e:
-                st.error(f"Erro inesperado durante a análise: {e}")
-                st.write("Tente novamente com álbuns diferentes.")
 
     # --- FASE 5: PERSISTÊNCIA NO BANCO DE DADOS ---
     if 'top_5_recomendacoes' in locals() and top_5_recomendacoes:
