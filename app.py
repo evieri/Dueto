@@ -385,7 +385,7 @@ if analisar_btn:
                         with col_info:
                             st.write(f"**{i+1}. {album['nome']}**")
                             st.write(f"🎤 Artista: {album['artista']}")
-                            (f"📊 Score: {rec['score']} | 🔥 Popularidade: {st.captionrec['popularity']} | 🎯 {rec['origem']}")
+                            st.caption(f"📊 Score: {rec['score']} | 🎯 {rec['origem']}")
                         st.divider()
 
                     # Mostra estatísticas
