@@ -22,21 +22,19 @@ except:
 
 # --- FUNÇÕES AUXILIARES ---
 
+@st.cache_data # Cache para não chamar a API de gêneros toda hora
+def obter_generos_validos(_sp):
+    """Busca e retorna a lista de gêneros válidos para recomendações."""
+    return _sp.recommendation_genre_seeds()['genres']
+
 def buscar_album(nome_album):
     """Busca um álbum no Spotify e retorna um dicionário com seus dados."""
     if not nome_album:
         return None
-    
     resultados = sp.search(q=f"album:{nome_album}", type="album", limit=1)
-    
     if resultados['albums']['items']:
         album = resultados['albums']['items'][0]
-        return {
-            "id": album['id'],
-            "nome": album['name'],
-            "artista": album['artists'][0]['name'],
-            "capa": album['images'][0]['url']
-        }
+        return {"id": album['id'], "nome": album['name'], "artista": album['artists'][0]['name'], "capa": album['images'][0]['url']}
     return None
 
 # --- INTERFACE DO USUÁRIO (UI) ---
@@ -76,27 +74,15 @@ if analisar_btn:
         st.warning("Por favor, preencha pelo menos um álbum para cada lado.")
     else:
         with st.spinner("Analisando gostos e buscando recomendações... 🎶"):
-            
-            # --- Busca dos dados ---
+            # Obter a lista de gêneros que a API de recomendação aceita
+            generos_validos = obter_generos_validos(sp)
+
             dados_albuns_a = [buscar_album(nome) for nome in nomes_albuns_a]
             dados_albuns_b = [buscar_album(nome) for nome in nomes_albuns_b]
-
-            # --- Dica de Debug: Mostrar quais álbuns não foram encontrados ---
-            nao_encontrados = []
-            for i, album_data in enumerate(dados_albuns_a):
-                if not album_data:
-                    nao_encontrados.append(f"Lado A: '{nomes_albuns_a[i]}'")
-            for i, album_data in enumerate(dados_albuns_b):
-                if not album_data:
-                    nao_encontrados.append(f"Lado B: '{nomes_albuns_b[i]}'")
             
-            if nao_encontrados:
-                st.warning(f"Atenção: Os seguintes álbuns não foram encontrados. Verifique a ortografia:\n\n* " + "\n* ".join(nao_encontrados))
-
             dados_albuns_a = [a for a in dados_albuns_a if a]
             dados_albuns_b = [a for a in dados_albuns_b if a]
-            
-            # --- Coleta de Sementes ---
+
             ids_artistas_semente = []
             generos_semente = set()
             ids_albuns_selecionados = {album['id'] for album in dados_albuns_a + dados_albuns_b}
@@ -110,14 +96,15 @@ if analisar_btn:
                     
                     info_artista = sp.artist(id_artista)
                     if info_artista and info_artista['genres']:
-                        generos_semente.update(info_artista['genres'])
+                        # FILTRO CRÍTICO: Adicionamos apenas os gêneros que são válidos como sementes
+                        for genero in info_artista['genres']:
+                            if genero in generos_validos:
+                                generos_semente.add(genero)
                 except Exception as e:
                     st.error(f"Ocorreu um erro ao buscar detalhes de um álbum: {e}")
 
-            # --- Lógica de Recomendação com Verificação ---
-            # CRÍTICO: Verificamos se temos sementes válidas ANTES de chamar a API
             if not ids_artistas_semente and not generos_semente:
-                st.error("Não foi possível encontrar informações suficientes (artistas ou gêneros) para gerar recomendações. Tente álbuns diferentes ou verifique a grafia.")
+                st.error("Não foi possível encontrar informações suficientes (artistas ou gêneros válidos) para gerar recomendações.")
             else:
                 # Se tivermos sementes, continuamos com a lógica
                 recomendacoes = sp.recommendations(
@@ -168,4 +155,3 @@ if analisar_btn:
                             st.caption(f"**{album['nome']}**\n\n{album['artista']}")
                 else:
                     st.write("Não foi possível gerar recomendações únicas com base nas escolhas.")
-                    
