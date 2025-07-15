@@ -13,10 +13,19 @@ st.set_page_config(layout="wide")
 try:
     CLIENT_ID = st.secrets["SPOTIPY_CLIENT_ID"]
     CLIENT_SECRET = st.secrets["SPOTIPY_CLIENT_SECRET"]
+
     auth_manager = SpotifyClientCredentials(client_id=CLIENT_ID, client_secret=CLIENT_SECRET)
     sp = spotipy.Spotify(auth_manager=auth_manager)
-except:
-    st.error("As credenciais do Spotify não foram encontradas. Verifique seu arquivo .streamlit/secrets.toml")
+
+    # CHECK-UP DE AUTENTICAÇÃO:
+    # Tenta buscar um artista conhecido para validar a conexão logo no início.
+    sp.artist('06HL4z0CvFAxyc27GXpf02') # ID da banda Queen
+
+except Exception as e:
+    st.error("🚨 Falha na autenticação com o Spotify!")
+    st.warning("Verifique se as variáveis `SPOTIPY_CLIENT_ID` e `SPOTIPY_CLIENT_SECRET` estão configuradas corretamente nos seus Secrets do Streamlit Cloud.")
+    # A linha abaixo ajuda no debug mostrando o erro exato que ocorreu
+    # st.exception(e)
     st.stop()
 
 
