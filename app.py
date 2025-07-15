@@ -31,7 +31,6 @@ except Exception as e:
 
 # --- FUNÇÕES AUXILIARES ---
 
-@st.cache_data # Cache para não chamar a API de gêneros toda hora
 def obter_generos_validos(_sp):
     """Busca e retorna a lista de gêneros válidos para recomendações."""
     return _sp.recommendation_genre_seeds()['genres']
