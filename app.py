@@ -148,18 +148,26 @@ def gerar_recomendacoes_alternativas(artistas_ids, generos_artistas):
     """Gera recomendações usando busca por artistas similares e álbuns populares."""
     recomendacoes = []
     
-    # Método 1: Buscar álbuns de artistas relacionados (LIMITES CORRIGIDOS)
+    # Método 1: Buscar álbuns de artistas relacionados
     for artista_id in artistas_ids[:3]:  # Limita a 3 artistas para não sobrecarregar
         try:
+            # Busca artistas relacionados
             artistas_relacionados = sp.artist_related_artists(artista_id)
             
-            for artista_relacionado in artistas_relacionados['artists'][:3]:  # Aumentado para 3 relacionados
+            for artista_relacionado in artistas_relacionados['artists'][:5]:  # Top 5 relacionados
                 try:
-                    # Aumentado para 3 álbuns por artista
+                    # Busca álbuns do artista relacionado
                     albuns = sp.artist_albums(artista_relacionado['id'], album_type='album', limit=3)
                     
                     for album in albuns['items']:
-                        if album['images']:
+                        if album['images']:  # Só adiciona se tiver imagem
+                            # Busca informações completas do álbum para obter popularidade
+                            try:
+                                album_completo = sp.album(album['id'])
+                                popularidade = album_completo.get('popularity', 0)
+                            except:
+                                popularidade = artista_relacionado.get('popularity', 0)
+                            
                             recomendacoes.append({
                                 'album_data': {
                                     'id': album['id'],
@@ -168,7 +176,7 @@ def gerar_recomendacoes_alternativas(artistas_ids, generos_artistas):
                                     'capa': album['images'][0]['url']
                                 },
                                 'score': 15,  # Score alto para artistas relacionados
-                                'popularity': artista_relacionado.get('popularity', 0),
+                                'popularity': popularidade,
                                 'origem': f"Relacionado a {sp.artist(artista_id)['name']}"
                             })
                 except:
@@ -176,16 +184,28 @@ def gerar_recomendacoes_alternativas(artistas_ids, generos_artistas):
         except:
             continue
     
-    # Método 2: Buscar por gêneros usando search (LIMITES CORRIGIDOS)
+    # Método 2: Buscar por gêneros usando search
     generos_principais = [g for g, count in Counter(generos_artistas).most_common(3)]
     
     for genero in generos_principais:
         try:
-            # Aumentado para 15 resultados por gênero
-            resultados = sp.search(q=f'genre:"{genero}"', type='album', limit=15)
+            # Busca álbuns por gênero
+            resultados = sp.search(q=f'genre:"{genero}"', type='album', limit=20)
             
             for album in resultados['albums']['items']:
                 if album['images']:
+                    # Para álbuns de search, tenta buscar popularidade completa
+                    try:
+                        album_completo = sp.album(album['id'])
+                        popularidade = album_completo.get('popularity', 0)
+                    except:
+                        # Se não conseguir, usa popularidade do artista
+                        try:
+                            artista_info = sp.artist(album['artists'][0]['id'])
+                            popularidade = artista_info.get('popularity', 0)
+                        except:
+                            popularidade = 0
+                    
                     recomendacoes.append({
                         'album_data': {
                             'id': album['id'],
@@ -194,8 +214,39 @@ def gerar_recomendacoes_alternativas(artistas_ids, generos_artistas):
                             'capa': album['images'][0]['url']
                         },
                         'score': 10,  # Score médio para busca por gênero
-                        'popularity': album.get('popularity', 0),
+                        'popularity': popularidade,
                         'origem': f"Gênero: {genero}"
+                    })
+        except:
+            continue
+    
+    # Método 3: Buscar álbuns populares dos próprios artistas
+    for artista_id in artistas_ids:
+        try:
+            albuns = sp.artist_albums(artista_id, album_type='album', limit=5)
+            artista_info = sp.artist(artista_id)
+            artista_nome = artista_info['name']
+            artista_popularidade = artista_info.get('popularity', 0)
+            
+            for album in albuns['items']:
+                if album['images']:
+                    # Tenta buscar popularidade específica do álbum
+                    try:
+                        album_completo = sp.album(album['id'])
+                        popularidade = album_completo.get('popularity', artista_popularidade)
+                    except:
+                        popularidade = artista_popularidade
+                    
+                    recomendacoes.append({
+                        'album_data': {
+                            'id': album['id'],
+                            'nome': album['name'],
+                            'artista': artista_nome,
+                            'capa': album['images'][0]['url']
+                        },
+                        'score': 8,  # Score menor para mesmo artista
+                        'popularity': popularidade,
+                        'origem': f"Mais de {artista_nome}"
                     })
         except:
             continue
