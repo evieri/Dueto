@@ -1,0 +1,27 @@
+# .gitignore
+
+# Ignorar pasta do ambiente virtual
+.venv/
+
+# Ignorar pasta de segredos do Streamlit
+.streamlit/
+
+# Arquivos de cache do Python
+__pycache__/
+*.pyc
+
+# Inicializa o git na sua pasta
+git init
+
+# Adiciona todos os arquivos para o próximo "save" (exceto os do .gitignore)
+git add .
+
+# Cria o "save" com uma mensagem descritiva
+git commit -m "Commit inicial do projeto Dueto com Streamlit"
+
+# Conecta sua pasta local ao repositório no GitHub
+# (Copie a URL da página do seu repositório no GitHub)
+git remote add origin https://github.com/evieri/Dueto.git
+
+# Envia o código para o GitHub
+git push -u origin main
