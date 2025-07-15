@@ -24,9 +24,12 @@ except Exception as e:
 def obter_generos_validos(_sp):
     """Busca e retorna a lista de gêneros válidos para recomendações."""
     try:
-        return _sp.recommendation_genre_seeds()['genres']
-    except:
-        return []
+        resultado = _sp.recommendation_genre_seeds()
+        return resultado['genres']
+    except Exception as e:
+        st.error(f"Erro ao buscar gêneros válidos: {e}")
+        # Fallback com gêneros conhecidos do Spotify
+        return ['pop', 'rock', 'hip-hop', 'jazz', 'classical', 'country', 'electronic', 'folk', 'funk', 'gospel', 'indie', 'latin', 'metal', 'punk', 'reggae', 'soul', 'world-music']
 
 def buscar_album(nome_album):
     """Busca um álbum no Spotify e retorna um dicionário com seus dados."""
@@ -108,21 +111,40 @@ if analisar_btn:
             for album_data in dados_albuns_a + dados_albuns_b:
                 try:
                     album_info_completo = sp.album(album_data['id'])
-                    info_artista = sp.artist(album_info_completo['artists'][0]['id'])
-                    artistas_fonte_ids.add(info_artista['id'])
-                    for genero in info_artista['genres']:
-                        if genero in generos_validos:
-                            gostos_de_genero.append(genero)
-                except: 
-                    pass
+                    artista_id = album_info_completo['artists'][0]['id']
+                    info_artista = sp.artist(artista_id)
+                    
+                    # Verifica se o artista ID é válido
+                    if info_artista and info_artista.get('id'):
+                        artistas_fonte_ids.add(info_artista['id'])
+                        
+                        # Processa gêneros
+                        for genero in info_artista.get('genres', []):
+                            if genero in generos_validos:
+                                gostos_de_genero.append(genero)
+                    else:
+                        st.warning(f"Artista inválido encontrado no álbum {album_data['nome']}")
+                        
+                except Exception as e:
+                    st.warning(f"Erro ao processar álbum {album_data['nome']}: {e}")
+                    continue
 
             # --- FASE 2: GERAÇÃO DE CANDIDATOS (LÓGICA DE SEMENTES CORRIGIDA) ---
             
-            # Converte IDs de artistas para lista e limita a 3
-            sementes_artistas = list(artistas_fonte_ids)[:3]
+            # Converte IDs de artistas para lista e limita a 2 (para deixar espaço para gêneros)
+            sementes_artistas = list(artistas_fonte_ids)[:2]
             
-            # Conta os gêneros e pega os top 3 que são válidos
-            top_generos = [genre for genre, count in Counter(gostos_de_genero).most_common(3)]
+            # Conta os gêneros e pega os top 2 que são válidos
+            top_generos = [genre for genre, count in Counter(gostos_de_genero).most_common(2)]
+            
+            # Se não temos gêneros dos artistas, usa gêneros populares
+            if not top_generos and generos_validos:
+                generos_fallback = ['pop', 'rock', 'indie', 'electronic', 'hip-hop']
+                for genero in generos_fallback:
+                    if genero in generos_validos:
+                        top_generos.append(genero)
+                        if len(top_generos) >= 2:
+                            break
             
             # Garante que temos pelo menos uma seed
             if not sementes_artistas and not top_generos:
@@ -132,30 +154,25 @@ if analisar_btn:
             # Constrói os parâmetros seguindo as regras da API
             params = {'limit': 50}
             
-            # Adiciona seeds de artistas se houver
+            # Adiciona seeds de artistas se houver (máximo 2)
             if sementes_artistas:
                 params['seed_artists'] = sementes_artistas
             
-            # Adiciona seeds de gêneros se houver
+            # Adiciona seeds de gêneros se houver (máximo 3)
             if top_generos:
-                params['seed_genres'] = top_generos
+                params['seed_genres'] = top_generos[:3]
             
-            # Se só temos artistas, força pelo menos um gênero popular
-            if sementes_artistas and not top_generos:
-                # Pega alguns gêneros populares como fallback
-                generos_fallback = ['pop', 'rock', 'indie', 'electronic', 'hip-hop']
-                for genero in generos_fallback:
-                    if genero in generos_validos:
-                        params['seed_genres'] = [genero]
-                        break
-            
-            # Garantia final: se ainda não temos seeds suficientes
-            total_seeds = len(params.get('seed_artists', [])) + len(params.get('seed_genres', []))
-            if total_seeds == 0:
+            # Garantia: sempre ter pelo menos uma seed
+            if not params.get('seed_artists') and not params.get('seed_genres'):
                 # Última tentativa: usar apenas gêneros populares
-                params['seed_genres'] = ['pop']
+                if generos_validos:
+                    params['seed_genres'] = [generos_validos[0]]
+                else:
+                    st.error("Não foi possível obter gêneros válidos da API do Spotify.")
+                    st.stop()
             
             st.info("Informações para Depuração:")
+            st.write("Artistas encontrados:", len(artistas_fonte_ids))
             st.write("Gêneros encontrados nos seus álbuns:", gostos_de_genero)
             st.write("Gêneros válidos da API (primeiros 10):", generos_validos[:10])
             st.write("Parâmetros Finais Enviados para a API:", params)
@@ -163,8 +180,12 @@ if analisar_btn:
             try:
                 # Chama a API com os parâmetros construídos dinamicamente
                 recomendacoes_api = sp.recommendations(**params)
+                st.success(f"API chamada com sucesso! Recebidas {len(recomendacoes_api['tracks'])} recomendações.")
             except Exception as e:
                 st.error(f"Ocorreu um erro ao buscar recomendações do Spotify: {str(e)}")
+                st.write("Detalhes do erro para debug:")
+                st.write(f"- Artistas seeds: {params.get('seed_artists', 'Nenhum')}")
+                st.write(f"- Gêneros seeds: {params.get('seed_genres', 'Nenhum')}")
                 st.write("Tente uma combinação diferente de álbuns.")
                 st.stop()
 
