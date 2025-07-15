@@ -13,10 +13,22 @@ try:
     CLIENT_SECRET = st.secrets["SPOTIPY_CLIENT_SECRET"]
     auth_manager = SpotifyClientCredentials(client_id=CLIENT_ID, client_secret=CLIENT_SECRET)
     sp = spotipy.Spotify(auth_manager=auth_manager)
-    # Check-up de autenticação
-    sp.artist('06HL4z0CvFAxyc27GXpf02') # ID da banda Queen
+    
+    # Check-up de autenticação mais detalhado
+    test_artist = sp.artist('06HL4z0CvFAxyc27GXpf02') # ID da banda Queen
+    st.success(f"✅ Autenticação bem-sucedida! Testado com: {test_artist['name']}")
+    
+    # Testa se o endpoint de recomendações está funcionando
+    try:
+        test_rec = sp.recommendations(seed_genres=['pop'], limit=1)
+        st.success("✅ Endpoint de recomendações funcionando!")
+    except Exception as rec_error:
+        st.error(f"❌ Problema com endpoint de recomendações: {rec_error}")
+        st.info("💡 Isso pode indicar um problema com as credenciais ou região.")
+        
 except Exception as e:
     st.error("🚨 Falha na autenticação com o Spotify!")
+    st.error(f"Erro detalhado: {e}")
     st.warning("Verifique suas credenciais no Streamlit Cloud Secrets e faça o 'Reboot app'.")
     st.stop()
 
@@ -25,11 +37,14 @@ def obter_generos_validos(_sp):
     """Busca e retorna a lista de gêneros válidos para recomendações."""
     try:
         resultado = _sp.recommendation_genre_seeds()
+        st.success(f"✅ Gêneros válidos obtidos da API: {len(resultado['genres'])} gêneros")
         return resultado['genres']
     except Exception as e:
-        st.error(f"Erro ao buscar gêneros válidos: {e}")
+        st.warning(f"⚠️ Erro ao buscar gêneros válidos da API: {e}")
+        st.info("🔄 Usando lista de fallback...")
         # Fallback com gêneros conhecidos do Spotify
-        return ['pop', 'rock', 'hip-hop', 'jazz', 'classical', 'country', 'electronic', 'folk', 'funk', 'gospel', 'indie', 'latin', 'metal', 'punk', 'reggae', 'soul', 'world-music']
+        fallback_genres = ['pop', 'rock', 'hip-hop', 'jazz', 'classical', 'country', 'electronic', 'folk', 'funk', 'gospel', 'indie', 'latin', 'metal', 'punk', 'reggae', 'soul', 'world-music', 'alternative', 'blues', 'dance', 'house', 'techno', 'ambient', 'drum-and-bass', 'dubstep', 'edm', 'garage', 'hardstyle', 'trance', 'acoustic', 'afrobeat', 'alt-rock', 'british', 'chill', 'disco', 'grunge', 'indie-pop', 'new-age', 'post-dubstep', 'progressive-house', 'r-n-b', 'reggaeton', 'songwriter', 'synth-pop']
+        return fallback_genres
 
 def buscar_album(nome_album):
     """Busca um álbum no Spotify e retorna um dicionário com seus dados."""
@@ -152,7 +167,10 @@ if analisar_btn:
                 st.stop()
             
             # Constrói os parâmetros seguindo as regras da API
-            params = {'limit': 50}
+            params = {
+                'limit': 50,
+                'market': 'BR'  # Especifica o mercado brasileiro
+            }
             
             # Adiciona seeds de artistas se houver (máximo 2)
             if sementes_artistas:
@@ -178,16 +196,46 @@ if analisar_btn:
             st.write("Parâmetros Finais Enviados para a API:", params)
             
             try:
-                # Chama a API com os parâmetros construídos dinamicamente
+                # Testa primeiro com uma chamada simples
+                test_params = {'seed_genres': ['pop'], 'limit': 1}
+                test_call = sp.recommendations(**test_params)
+                
+                # Se o teste passou, faz a chamada real
                 recomendacoes_api = sp.recommendations(**params)
                 st.success(f"API chamada com sucesso! Recebidas {len(recomendacoes_api['tracks'])} recomendações.")
+                
             except Exception as e:
                 st.error(f"Ocorreu um erro ao buscar recomendações do Spotify: {str(e)}")
-                st.write("Detalhes do erro para debug:")
-                st.write(f"- Artistas seeds: {params.get('seed_artists', 'Nenhum')}")
-                st.write(f"- Gêneros seeds: {params.get('seed_genres', 'Nenhum')}")
-                st.write("Tente uma combinação diferente de álbuns.")
-                st.stop()
+                
+                # Tenta diagnóstico mais detalhado
+                st.write("🔍 **Diagnóstico detalhado:**")
+                
+                # Testa cada artista individualmente
+                artistas_validos = []
+                for artista_id in params.get('seed_artists', []):
+                    try:
+                        artista_info = sp.artist(artista_id)
+                        artistas_validos.append(artista_id)
+                        st.write(f"✅ Artista {artista_info['name']} (ID: {artista_id}) - OK")
+                    except Exception as artist_error:
+                        st.write(f"❌ Artista ID {artista_id} - Erro: {artist_error}")
+                
+                # Tenta apenas com gêneros se os artistas falharam
+                if artistas_validos and params.get('seed_genres'):
+                    st.write("🔄 **Tentando apenas com gêneros...**")
+                    try:
+                        params_generos = {'seed_genres': params['seed_genres'], 'limit': 50}
+                        recomendacoes_api = sp.recommendations(**params_generos)
+                        st.success(f"Sucesso apenas com gêneros! Recebidas {len(recomendacoes_api['tracks'])} recomendações.")
+                    except Exception as genre_error:
+                        st.error(f"Erro também com gêneros: {genre_error}")
+                        st.stop()
+                else:
+                    st.write("Detalhes do erro para debug:")
+                    st.write(f"- Artistas seeds: {params.get('seed_artists', 'Nenhum')}")
+                    st.write(f"- Gêneros seeds: {params.get('seed_genres', 'Nenhum')}")
+                    st.write("Tente uma combinação diferente de álbuns.")
+                    st.stop()
 
             # --- FASE 3 e 4: PONTUAÇÃO E ORDENAÇÃO ---
             candidatos_pontuados = []
