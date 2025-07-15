@@ -61,7 +61,7 @@ for lado, coluna in [('a', col1), ('b', col2)]:
             if album_selecionado:
                 col_img, col_btn = st.columns([1, 2])
                 with col_img:
-                    st.image(album_selecionado['capa'], use_column_width=True)
+                    st.image(album_selecionado['capa'], use_container_width=True)
                 with col_btn:
                     st.write(f"**{album_selecionado['nome']}**")
                     st.caption(album_selecionado['artista'])
