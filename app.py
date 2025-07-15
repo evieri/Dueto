@@ -12,18 +12,15 @@ st.set_page_config(layout="wide")
 try:
     CLIENT_ID = st.secrets["SPOTIPY_CLIENT_ID"]
     CLIENT_SECRET = st.secrets["SPOTIPY_CLIENT_SECRET"]
-    DATABASE_URL = st.secrets["DATABASE_URL"] # Carrega a URL do banco
+    DATABASE_URL = st.secrets["DATABASE_URL"] # ADICIONE ESTA LINHA
     auth_manager = SpotifyClientCredentials(client_id=CLIENT_ID, client_secret=CLIENT_SECRET)
     sp = spotipy.Spotify(auth_manager=auth_manager)
-    sp.artist('06HL4z0CvFAxyc27GXpf02') # Check-up
 except Exception as e:
     st.error("🚨 Falha na configuração inicial!")
     st.warning("Verifique se todas as credenciais (Spotify e DATABASE_URL) estão nos seus Secrets do Streamlit Cloud.")
     st.stop()
 
 # --- FUNÇÕES DE BANCO DE DADOS ---
-
-# @st.cache_resource gerencia a conexão, mantendo-a viva e evitando múltiplas reconexões.
 @st.cache_resource
 def get_db_connection():
     """Estabelece e retorna uma conexão com o banco de dados."""
@@ -32,108 +29,53 @@ def get_db_connection():
 
 def setup_database(conn):
     """Cria as tabelas do banco de dados se elas não existirem."""
-    # Este é o código SQL que você gerou anteriormente para criar as tabelas
-    # Foi adaptado para o psycopg2 e para não dar erro se a tabela já existir.
     create_tables_sql = """
-    CREATE TABLE IF NOT EXISTS Artistas (
-        ID_Artista SERIAL PRIMARY KEY,
-        Nome_Artista VARCHAR(255) NOT NULL UNIQUE
-    );
-    CREATE TABLE IF NOT EXISTS Generos (
-        ID_Genero SERIAL PRIMARY KEY,
-        Nome_Genero VARCHAR(100) NOT NULL UNIQUE
-    );
-    CREATE TABLE IF NOT EXISTS Albuns (
-        ID_Spotify_Album VARCHAR(255) PRIMARY KEY,
-        Nome_Album VARCHAR(255) NOT NULL,
-        Ano_Lancamento SMALLINT,
-        URL_Capa TEXT,
-        ID_Artista INT NOT NULL,
-        CONSTRAINT fk_artista FOREIGN KEY(ID_Artista) REFERENCES Artistas(ID_Artista)
-    );
-    CREATE TABLE IF NOT EXISTS Albuns_Generos (
-        ID_Spotify_Album VARCHAR(255) NOT NULL,
-        ID_Genero INT NOT NULL,
-        CONSTRAINT fk_album FOREIGN KEY(ID_Spotify_Album) REFERENCES Albuns(ID_Spotify_Album),
-        CONSTRAINT fk_genero FOREIGN KEY(ID_Genero) REFERENCES Generos(ID_Genero),
-        PRIMARY KEY (ID_Spotify_Album, ID_Genero)
-    );
-    CREATE TABLE IF NOT EXISTS Duetos (
-        ID_Dueto SERIAL PRIMARY KEY,
-        Data_Criacao TIMESTAMPTZ DEFAULT NOW()
-    );
-    CREATE TABLE IF NOT EXISTS Selecoes_Albuns (
-        ID_Selecao SERIAL PRIMARY KEY,
-        ID_Dueto INT NOT NULL,
-        ID_Spotify_Album VARCHAR(255) NOT NULL,
-        Tipo_Selecao VARCHAR(20) NOT NULL, -- 'Entrada' ou 'Recomendacao'
-        Lado CHAR(1), -- 'A', 'B' ou NULL
-        CONSTRAINT fk_dueto FOREIGN KEY(ID_Dueto) REFERENCES Duetos(ID_Dueto),
-        CONSTRAINT fk_album_selecao FOREIGN KEY(ID_Spotify_Album) REFERENCES Albuns(ID_Spotify_Album)
-    );
+    CREATE TABLE IF NOT EXISTS Artistas (ID_Artista SERIAL PRIMARY KEY, Nome_Artista VARCHAR(255) NOT NULL UNIQUE);
+    CREATE TABLE IF NOT EXISTS Generos (ID_Genero SERIAL PRIMARY KEY, Nome_Genero VARCHAR(100) NOT NULL UNIQUE);
+    CREATE TABLE IF NOT EXISTS Albuns (ID_Spotify_Album VARCHAR(255) PRIMARY KEY, Nome_Album VARCHAR(255) NOT NULL, Ano_Lancamento SMALLINT, URL_Capa TEXT, ID_Artista INT NOT NULL, CONSTRAINT fk_artista FOREIGN KEY(ID_Artista) REFERENCES Artistas(ID_Artista) ON DELETE CASCADE);
+    CREATE TABLE IF NOT EXISTS Albuns_Generos (ID_Spotify_Album VARCHAR(255) NOT NULL, ID_Genero INT NOT NULL, CONSTRAINT fk_album FOREIGN KEY(ID_Spotify_Album) REFERENCES Albuns(ID_Spotify_Album) ON DELETE CASCADE, CONSTRAINT fk_genero FOREIGN KEY(ID_Genero) REFERENCES Generos(ID_Genero) ON DELETE CASCADE, PRIMARY KEY (ID_Spotify_Album, ID_Genero));
+    CREATE TABLE IF NOT EXISTS Duetos (ID_Dueto SERIAL PRIMARY KEY, Data_Criacao TIMESTAMPTZ DEFAULT NOW());
+    CREATE TABLE IF NOT EXISTS Selecoes_Albuns (ID_Selecao SERIAL PRIMARY KEY, ID_Dueto INT NOT NULL, ID_Spotify_Album VARCHAR(255) NOT NULL, Tipo_Selecao VARCHAR(20) NOT NULL, Lado CHAR(1), CONSTRAINT fk_dueto FOREIGN KEY(ID_Dueto) REFERENCES Duetos(ID_Dueto) ON DELETE CASCADE, CONSTRAINT fk_album_selecao FOREIGN KEY(ID_Spotify_Album) REFERENCES Albuns(ID_Spotify_Album) ON DELETE CASCADE);
     """
     with conn.cursor() as cur:
         cur.execute(create_tables_sql)
         conn.commit()
 
-def salvar_dados_dueto(conn, albuns_selecionados, albuns_recomendados):
+def salvar_dados_dueto(conn, albuns_selecionados_a, albuns_selecionados_b, albuns_recomendados):
     """Salva a sessão inteira do dueto no banco de dados."""
     with conn.cursor() as cur:
         try:
-            # Fase 1: Salvar o evento principal do Dueto e obter seu ID
             cur.execute("INSERT INTO Duetos DEFAULT VALUES RETURNING ID_Dueto;")
             dueto_id = cur.fetchone()[0]
 
-            # Função auxiliar para salvar um único álbum e suas associações
             def processar_album(album_dict, tipo, lado=None):
-                # Salva o Artista (ignora se já existe)
-                cur.execute("INSERT INTO Artistas (Nome_Artista) VALUES (%s) ON CONFLICT (Nome_Artista) DO NOTHING;", (album_dict['artista'],))
-                cur.execute("SELECT ID_Artista FROM Artistas WHERE Nome_Artista = %s;", (album_dict['artista'],))
-                id_artista = cur.fetchone()[0]
-
-                # Salva o Álbum (ignora se já existe)
                 album_info = sp.album(album_dict['id'])
-                cur.execute(
-                    """
-                    INSERT INTO Albuns (ID_Spotify_Album, Nome_Album, Ano_Lancamento, URL_Capa, ID_Artista)
-                    VALUES (%s, %s, %s, %s, %s) ON CONFLICT (ID_Spotify_Album) DO NOTHING;
-                    """,
-                    (album_dict['id'], album_dict['nome'], int(album_info['release_date'][:4]), album_dict['capa'], id_artista)
-                )
+                artista_info = sp.artist(album_info['artists'][0]['id'])
+                
+                cur.execute("INSERT INTO Artistas (Nome_Artista) VALUES (%s) ON CONFLICT (Nome_Artista) DO NOTHING;", (artista_info['name'],))
+                cur.execute("SELECT ID_Artista FROM Artistas WHERE Nome_Artista = %s;", (artista_info['name'],))
+                id_artista = cur.fetchone()[0]
+                
+                ano_str = album_info['release_date'].split('-')[0]
+                cur.execute("INSERT INTO Albuns (ID_Spotify_Album, Nome_Album, Ano_Lancamento, URL_Capa, ID_Artista) VALUES (%s, %s, %s, %s, %s) ON CONFLICT (ID_Spotify_Album) DO NOTHING;", (album_dict['id'], album_dict['nome'], int(ano_str), album_dict['capa'], id_artista))
 
-                # Salva os Gêneros e a relação Álbum-Gênero
-                generos_artista = sp.artist(album_info['artists'][0]['id'])['genres']
-                for genero in generos_artista:
+                for genero in artista_info.get('genres', []):
                     cur.execute("INSERT INTO Generos (Nome_Genero) VALUES (%s) ON CONFLICT (Nome_Genero) DO NOTHING;", (genero,))
                     cur.execute("SELECT ID_Genero FROM Generos WHERE Nome_Genero = %s;", (genero,))
                     id_genero = cur.fetchone()[0]
-                    cur.execute(
-                        "INSERT INTO Albuns_Generos (ID_Spotify_Album, ID_Genero) VALUES (%s, %s) ON CONFLICT DO NOTHING;",
-                        (album_dict['id'], id_genero)
-                    )
+                    cur.execute("INSERT INTO Albuns_Generos (ID_Spotify_Album, ID_Genero) VALUES (%s, %s) ON CONFLICT DO NOTHING;", (album_dict['id'], id_genero))
                 
-                # Finalmente, salva a seleção
-                cur.execute(
-                    "INSERT INTO Selecoes_Albuns (ID_Dueto, ID_Spotify_Album, Tipo_Selecao, Lado) VALUES (%s, %s, %s, %s);",
-                    (dueto_id, album_dict['id'], tipo, lado)
-                )
+                cur.execute("INSERT INTO Selecoes_Albuns (ID_Dueto, ID_Spotify_Album, Tipo_Selecao, Lado) VALUES (%s, %s, %s, %s);", (dueto_id, album_dict['id'], tipo, lado))
 
-            # Processa todos os álbuns selecionados
-            for album in albuns_selecionados['a']:
-                processar_album(album, 'Entrada', 'A')
-            for album in albuns_selecionados['b']:
-                processar_album(album, 'Entrada', 'B')
-
-            # Processa todos os álbuns recomendados
-            for rec in albuns_recomendados:
-                processar_album(rec['album_data'], 'Recomendacao')
+            for album in albuns_selecionados_a: processar_album(album, 'Entrada', 'A')
+            for album in albuns_selecionados_b: processar_album(album, 'Entrada', 'B')
+            for rec in albuns_recomendados: processar_album(rec['album_data'], 'Recomendacao')
 
             conn.commit()
             st.toast(f"✅ Dueto #{dueto_id} salvo no banco de dados!")
-
         except Exception as e:
-            conn.rollback() # Desfaz as alterações se ocorrer um erro
-            st.error(f"Ocorreu um erro ao salvar os dados: {e}")
+            conn.rollback()
+            st.error(f"Ocorreu um erro ao salvar os dados no banco: {e}")
 
 # --- FUNÇÕES AUXILIARES ---
 def buscar_album(nome_album):
@@ -370,6 +312,15 @@ if analisar_btn:
                     
                     # Pega top 5 recomendações
                     top_recomendacoes = recomendacoes_ordenadas[:5]
+
+                    # --- ADIÇÃO: BLOCO PARA SALVAR NO BANCO DE DADOS ---
+                    try:
+                        conn = get_db_connection()
+                        setup_database(conn) # Garante que as tabelas existem
+                        salvar_dados_dueto(conn, dados_albuns_a, dados_albuns_b, top_recomendacoes)
+                    except Exception as e:
+                        st.error(f"Não foi possível conectar ou salvar no banco de dados: {e}")
+                    # --- FIM DA ADIÇÃO ---
                     
                     st.success("✨ Análise Concluída!")
                     st.divider()
